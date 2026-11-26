@@ -1,0 +1,61 @@
+name: build-wda-trollstore
+
+# Builds the turbo-patched WebDriverAgent as an unsigned .ipa for TrollStore
+# (no Apple Developer account needed — TrollStore signs it on-device).
+# Trigger manually: Actions tab -> "build-wda-trollstore" -> Run workflow.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    env:
+      # appium/WebDriverAgent 16.14.0 — the ref turbotap's deploy script targets.
+      WDA_REF: d17782422d55ff1e5e0ceb74eb1fd509cc0c35b6
+    steps:
+      - name: Checkout turbotap (for patches/wda-turbo.patch)
+        uses: actions/checkout@v4
+
+      - name: Select latest Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Clone appium/WebDriverAgent @ 16.14.0
+        run: |
+          git clone https://github.com/appium/WebDriverAgent.git wda
+          cd wda
+          git checkout --force "$WDA_REF"
+
+      - name: Apply wda-turbo patch
+        run: |
+          cd wda
+          git apply "$GITHUB_WORKSPACE/patches/wda-turbo.patch"
+          echo "wda-turbo patch applied on $WDA_REF"
+
+      - name: Build WebDriverAgentRunner (unsigned)
+        run: |
+          cd wda
+          xcodebuild build-for-testing \
+            -project WebDriverAgent.xcodeproj \
+            -scheme WebDriverAgentRunner \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      - name: Package Payload/*.app into an .ipa
+        run: |
+          cd wda
+          APP="$(find build/Build/Products -type d -name 'WebDriverAgentRunner-Runner.app' | head -1)"
+          test -n "$APP" || { echo "Runner.app not found"; exit 1; }
+          echo "app: $APP"
+          rm -rf Payload && mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry WebDriverAgentRunner.ipa Payload
+          ls -la WebDriverAgentRunner.ipa
+
+      - name: Upload .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WebDriverAgentRunner-ipa
+          path: wda/WebDriverAgentRunner.ipa
+          if-no-files-found: error
