@@ -1,41 +1,48 @@
 name: build-wda-trollstore
 
-# Builds the turbo-patched WebDriverAgent as an unsigned .ipa for TrollStore
-# (no Apple Developer account needed — TrollStore signs it on-device).
-# Trigger manually: Actions tab -> "build-wda-trollstore" -> Run workflow.
+# Builds WebDriverAgent as an unsigned .ipa for TrollStore (no Apple Developer
+# account needed — TrollStore signs it on-device). Trigger manually:
+# Actions -> "build-wda-trollstore" -> Run workflow.
+#
+# Uses the latest appium/WebDriverAgent tag, which handles current Xcode's
+# Swift Testing framework embedding correctly (the pinned 16.14.0 did not, and
+# crashed on iOS 17 with a missing lib_TestingInterop.dylib). The only free
+# GitHub-hosted runner here is macos-latest (Apple Silicon, Xcode 16+); macos-13
+# is retired and macos-14 is not available to this account. The turbo patch is
+# for 16.14.0 and is applied best-effort; if it does not apply, a stock WDA is
+# built (turbotap works against stock WDA, just without the speed patch).
 
 on:
   workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-13
+    runs-on: macos-latest
     env:
-      # appium/WebDriverAgent 16.14.0 — the ref turbotap's deploy script targets.
-      WDA_REF: d17782422d55ff1e5e0ceb74eb1fd509cc0c35b6
+      WDA_REF: v16.15.3
     steps:
       - name: Checkout turbotap (for patches/wda-turbo.patch)
         uses: actions/checkout@v4
 
-      - name: Select newest Xcode 15.x (iOS 17 SDK — avoids iOS-26 Swift Testing deps)
+      - name: Select Xcode
         run: |
-          XC="$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)"
-          test -n "$XC" || { echo "No Xcode 15.x on runner; available:"; ls -d /Applications/Xcode*.app; exit 1; }
-          echo "Using $XC"
-          sudo xcode-select -s "$XC"
+          sudo xcode-select -s /Applications/Xcode.app
           xcodebuild -version
 
-      - name: Clone appium/WebDriverAgent @ 16.14.0
+      - name: Clone appium/WebDriverAgent
         run: |
           git clone https://github.com/appium/WebDriverAgent.git wda
           cd wda
           git checkout --force "$WDA_REF"
 
-      - name: Apply wda-turbo patch
+      - name: Apply wda-turbo patch (best-effort)
         run: |
           cd wda
-          git apply "$GITHUB_WORKSPACE/patches/wda-turbo.patch"
-          echo "wda-turbo patch applied on $WDA_REF"
+          if git apply "$GITHUB_WORKSPACE/patches/wda-turbo.patch" 2>/dev/null; then
+            echo "wda-turbo patch applied on $WDA_REF"
+          else
+            echo "wda-turbo patch did NOT apply on $WDA_REF — building stock WDA (turbotap supports stock)."
+          fi
 
       - name: Build WebDriverAgentRunner (unsigned)
         run: |
@@ -56,6 +63,8 @@ jobs:
           rm -rf Payload && mkdir -p Payload
           cp -R "$APP" Payload/
           find Payload -name '*.dSYM' -exec rm -rf {} + 2>/dev/null || true   # dSYM breaks ldid signing on-device
+          echo "--- embedded Frameworks (for reference) ---"
+          ls Payload/WebDriverAgentRunner-Runner.app/Frameworks 2>/dev/null || true
           zip -qry WebDriverAgentRunner.ipa Payload
           ls -la WebDriverAgentRunner.ipa
 
