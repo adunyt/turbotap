@@ -9,7 +9,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-13
     env:
       # appium/WebDriverAgent 16.14.0 — the ref turbotap's deploy script targets.
       WDA_REF: d17782422d55ff1e5e0ceb74eb1fd509cc0c35b6
@@ -17,9 +17,12 @@ jobs:
       - name: Checkout turbotap (for patches/wda-turbo.patch)
         uses: actions/checkout@v4
 
-      - name: Select Xcode 15.4 (iOS 17 SDK — avoids iOS-26 Swift Testing deps)
+      - name: Select newest Xcode 15.x (iOS 17 SDK — avoids iOS-26 Swift Testing deps)
         run: |
-          sudo xcode-select -s /Applications/Xcode_15.4.app
+          XC="$(ls -d /Applications/Xcode_15*.app 2>/dev/null | sort -V | tail -1)"
+          test -n "$XC" || { echo "No Xcode 15.x on runner; available:"; ls -d /Applications/Xcode*.app; exit 1; }
+          echo "Using $XC"
+          sudo xcode-select -s "$XC"
           xcodebuild -version
 
       - name: Clone appium/WebDriverAgent @ 16.14.0
